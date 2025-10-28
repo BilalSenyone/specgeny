@@ -1,0 +1,377 @@
+openapi: 3.1.0
+info:
+  title: SpecGeny MVP API
+  version: 1.0.0
+  description: |
+    AI-powered specification generation platform API.
+
+    **Architecture**: Stateless request/response (no job queue, no database)
+
+    **Flow**:
+    1. POST /generate with files → Full specification JSON
+    2. POST /export/pdf with markdown → PDF file
+
+    **Rate Limits**: 10 requests/minute per IP
+    **Max Upload**: 50 MB, 10 files
+  contact:
+    name: SpecGeny Support
+    email: support@specgeny.com
+
+servers:
+  - url: https://api.specgeny.com/api/v1
+    description: Production
+  - url: http://localhost:8000/api/v1
+    description: Development
+
+tags:
+  - name: Generation
+    description: Specification generation operations
+  - name: Export
+    description: Document export operations
+
+paths:
+  /generate:
+    post:
+      operationId: generateSpecification
+      summary: Generate specification from uploaded files
+      description: |
+        Upload project files and generate a structured specification document.
+
+        **Processing**: Synchronous (2-5 minutes)
+        **Timeout**: 5 minutes (300 seconds)
+        **State**: Stateless (no job persistence)
+
+        **LangGraph Pipeline**:
+        1. file_reader → Extract text/images
+        2. context_builder → Build prompt
+        3. llm → Call DeepSeek/Claude
+        4. parser → Parse Markdown sections
+        5. confidence_calculator → Score each section
+      tags:
+        - Generation
+      requestBody:
+        required: true
+        content:
+          multipart/form-data:
+            schema:
+              type: object
+              required:
+                - files
+              properties:
+                files:
+                  type: array
+                  description: Uploaded project files
+                  minItems: 1
+                  maxItems: 10
+                  items:
+                    type: string
+                    format: binary
+                template_name:
+                  type: string
+                  description: Specification template identifier
+                  enum:
+                    - uipath_pdd
+                  default: uipath_pdd
+            encoding:
+              files:
+                contentType: application/octet-stream
+      responses:
+        '200':
+          description: Specification generated successfully
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/GenerationResponse'
+              example:
+                specification:
+                  Executive Summary: "This automation process streamlines invoice processing..."
+                  User Stories: "As a finance user, I want to..."
+                  Functional Requirements: "FR-001: System must validate invoice numbers..."
+                  Technical Architecture: "The system consists of UiPath orchestrator..."
+                  Error Handling: "All exceptions are logged to Orchestrator..."
+                  Testing Strategy: "Unit tests cover all reusable components..."
+                confidence_scores:
+                  Executive Summary:
+                    score: 85
+                    classification: high
+                    reasons: []
+                  User Stories:
+                    score: 72
+                    classification: medium
+                    reasons:
+                      - "Section too short"
+                  Functional Requirements:
+                    score: 90
+                    classification: high
+                    reasons: []
+                  Technical Architecture:
+                    score: 45
+                    classification: low
+                    reasons:
+                      - "Section too short"
+                      - "No source keywords"
+                  Error Handling:
+                    score: 80
+                    classification: high
+                    reasons: []
+                  Testing Strategy:
+                    score: 65
+                    classification: medium
+                    reasons:
+                      - "No source keywords"
+                generation_time_seconds: 143.2
+                warnings: []
+        '400':
+          description: Bad request (validation error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                tooManyFiles:
+                  summary: Too many files
+                  value:
+                    error: "Validation error"
+                    details: "Maximum 10 files allowed, received 12"
+                fileTooLarge:
+                  summary: Files exceed size limit
+                  value:
+                    error: "Validation error"
+                    details: "Total file size 65 MB exceeds 50 MB limit"
+                unsupportedFormat:
+                  summary: Unsupported file format
+                  value:
+                    error: "Validation error"
+                    details: "File 'document.zip' has unsupported format. Allowed: .txt, .md, .docx, .pdf, .png, .jpg, .xlsx"
+                invalidTemplate:
+                  summary: Invalid template name
+                  value:
+                    error: "Validation error"
+                    details: "Template 'invalid_template' not found. Allowed: uipath_pdd"
+        '422':
+          description: Unprocessable entity (file parsing error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                corruptedFile:
+                  summary: Corrupted file
+                  value:
+                    error: "File processing error"
+                    details: "File 'requirements.pdf' is corrupted and cannot be parsed"
+                noExtractableContent:
+                  summary: No extractable content
+                  value:
+                    error: "File processing error"
+                    details: "No extractable content found in uploaded files"
+        '500':
+          description: Internal server error (LLM failure, pipeline error)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                llmTimeout:
+                  summary: LLM API timeout
+                  value:
+                    error: "Generation failed"
+                    details: "LLM API request timed out after 300 seconds. Please try again."
+                llmError:
+                  summary: LLM API error
+                  value:
+                    error: "Generation failed"
+                    details: "LLM service unavailable. Please try again later."
+        '503':
+          description: Service unavailable (rate limit exceeded)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "Rate limit exceeded"
+                details: "Maximum 10 requests per minute. Please wait before retrying."
+
+  /export/pdf:
+    post:
+      operationId: exportPDF
+      summary: Export specification to PDF
+      description: |
+        Convert Markdown specification to PDF using Pandoc.
+
+        **Processing**: Synchronous (<5 seconds)
+        **Conversion**: Pandoc with XeLaTeX engine
+      tags:
+        - Export
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PDFExportRequest'
+            example:
+              markdown: |
+                # Executive Summary
+
+                This automation process streamlines invoice processing...
+
+                # User Stories
+
+                As a finance user, I want to...
+              filename: my-specification.pdf
+      responses:
+        '200':
+          description: PDF generated successfully
+          content:
+            application/pdf:
+              schema:
+                type: string
+                format: binary
+          headers:
+            Content-Disposition:
+              schema:
+                type: string
+              description: Attachment with filename
+              example: attachment; filename="my-specification.pdf"
+            Content-Type:
+              schema:
+                type: string
+              example: application/pdf
+        '400':
+          description: Bad request (invalid markdown, invalid filename)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              examples:
+                emptyMarkdown:
+                  summary: Empty markdown content
+                  value:
+                    error: "Validation error"
+                    details: "Markdown content cannot be empty"
+                invalidFilename:
+                  summary: Invalid filename
+                  value:
+                    error: "Validation error"
+                    details: "Filename must contain only alphanumeric characters, hyphens, and underscores"
+        '500':
+          description: Internal server error (Pandoc failure)
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ErrorResponse'
+              example:
+                error: "PDF export failed"
+                details: "Pandoc conversion error. Please check markdown formatting."
+
+components:
+  schemas:
+    GenerationResponse:
+      type: object
+      required:
+        - specification
+        - confidence_scores
+        - generation_time_seconds
+        - warnings
+      properties:
+        specification:
+          type: object
+          description: Section name to Markdown content mapping
+          additionalProperties:
+            type: string
+          example:
+            Executive Summary: "This automation process..."
+            User Stories: "As a business user..."
+            Functional Requirements: "FR-001: System must..."
+        confidence_scores:
+          type: object
+          description: Section name to confidence score mapping
+          additionalProperties:
+            $ref: '#/components/schemas/ConfidenceScore'
+        generation_time_seconds:
+          type: number
+          format: float
+          description: Total processing time in seconds
+          example: 143.2
+        warnings:
+          type: array
+          description: Non-fatal issues (e.g., truncated files)
+          items:
+            type: string
+          example:
+            - "File 'large-document.pdf' was truncated to fit 200K token limit"
+
+    ConfidenceScore:
+      type: object
+      required:
+        - score
+        - classification
+        - reasons
+      properties:
+        score:
+          type: integer
+          minimum: 0
+          maximum: 100
+          description: Heuristic confidence value (0-100)
+          example: 85
+        classification:
+          type: string
+          enum:
+            - high
+            - medium
+            - low
+          description: |
+            Classification based on score:
+            - high: >= 80 (green badge)
+            - medium: 50-79 (yellow badge)
+            - low: < 50 (red badge)
+          example: high
+        reasons:
+          type: array
+          description: Applied heuristics (empty if score = 100)
+          items:
+            type: string
+            enum:
+              - "Section too short"
+              - "Generic phrases detected"
+              - "No source keywords"
+          example: []
+
+    PDFExportRequest:
+      type: object
+      required:
+        - markdown
+      properties:
+        markdown:
+          type: string
+          minLength: 1
+          description: Full Markdown specification content
+          example: |
+            # Executive Summary
+
+            This automation process...
+        filename:
+          type: string
+          pattern: '^[a-zA-Z0-9_-]+\.pdf$'
+          default: specification.pdf
+          description: Output PDF filename (alphanumeric, hyphens, underscores only)
+          example: my-specification.pdf
+
+    ErrorResponse:
+      type: object
+      required:
+        - error
+        - details
+      properties:
+        error:
+          type: string
+          description: Error category
+          example: "Validation error"
+        details:
+          type: string
+          description: Human-readable error message
+          example: "Maximum 10 files allowed, received 12"
+
+  securitySchemes: {}
+
+security: []

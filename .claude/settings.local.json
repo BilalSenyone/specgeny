@@ -1,0 +1,14 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(git fetch:*)",
+      "Bash(powershell:*)",
+      "SlashCommand(/speckit.plan implement the plan following basic tech instructions of @documents\\tech-instructions.md)",
+      "SlashCommand(/speckit.tasks)"
+    ]
+  },
+  "enableAllProjectMcpServers": true,
+  "enabledMcpjsonServers": [
+    "shadcn"
+  ]
+}
