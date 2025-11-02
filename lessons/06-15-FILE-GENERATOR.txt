@@ -1,0 +1,11 @@
+Lessons to create:
+06-conditional-routing.md
+07-hitl-patterns.md
+08-checkpointing.md
+09-error-handling.md
+10-context7-fundamentals.md
+11-rag-document-understanding.md
+12-multi-document-synthesis.md
+13-template-analysis.md
+14-block-generation-hitl.md
+15-final-integration.md

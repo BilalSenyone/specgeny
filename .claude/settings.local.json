@@ -4,7 +4,14 @@
       "Bash(git fetch:*)",
       "Bash(powershell:*)",
       "SlashCommand(/speckit.plan implement the plan following basic tech instructions of @documents\\tech-instructions.md)",
-      "SlashCommand(/speckit.tasks)"
+      "SlashCommand(/speckit.tasks)",
+      "mcp__context7__resolve-library-id",
+      "mcp__context7__get-library-docs",
+      "Bash(code --list-extensions)",
+      "Bash(findstr:*)",
+      "Read(//c/Users/diall/AppData/Roaming/Cursor/User/**)",
+      "Bash(python -m pip:*)",
+      "WebFetch(domain:docs.langchain.com)"
     ]
   },
   "enableAllProjectMcpServers": true,
