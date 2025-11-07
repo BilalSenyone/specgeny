@@ -595,6 +595,48 @@ test_docs = [
 ]
 ```
 
+<details>
+<summary>📝 <strong>Solution: Cross-Document Reference System</strong></summary>
+
+```python
+"""Solution: Cross-Document Reference System"""
+from typing import TypedDict, List
+from langgraph.graph import StateGraph, START, END
+from langchain_anthropic import ChatAnthropic
+import re
+
+class RefState(TypedDict):
+    documents: List[dict]
+    references: List[dict]
+    synthesis: str
+
+def extract_references(state: RefState) -> RefState:
+    refs = []
+    for doc in state["documents"]:
+        found = re.findall(r'(FR-\d{3}|SEC-\d{3})', doc["content"])
+        refs.extend([{"from": doc["id"], "to": ref} for ref in found])
+    return {"references": refs}
+
+def synthesize_documents(state: RefState) -> RefState:
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
+    content = "\n\n".join(f"[{d['title']}]: {d['content']}" for d in state["documents"])
+    response = llm.invoke(f"Synthesize:\n{content}\n\nReferences: {state['references']}")
+    return {"synthesis": response.content}
+
+workflow = StateGraph(RefState)
+workflow.add_node("extract", extract_references)
+workflow.add_node("synthesize", synthesize_documents)
+workflow.add_edge(START, "extract")
+workflow.add_edge("extract", "synthesize")
+workflow.add_edge("synthesize", END)
+
+app = workflow.compile()
+result = app.invoke({"documents": [{"id": "req", "title": "Req", "content": "FR-001: Auth"}], "references": [], "synthesis": ""})
+print(f"Synthesis: {result['synthesis']}")
+```
+
+</details>
+
 ---
 
 ## 🚀 Challenge: Conflict Resolution Engine
@@ -610,6 +652,49 @@ Create a system that:
 4. **Generates explanations** for each resolution
 5. **Flags unresolvable conflicts** for human review
 6. **Learns from user decisions** to improve future resolutions
+
+<details>
+<summary>📝 <strong>Solution: Conflict Resolution Engine</strong></summary>
+
+```python
+"""Solution: Conflict Resolution with conflict detection"""
+from typing import TypedDict, List
+from langgraph.graph import StateGraph, START, END
+from langchain_anthropic import ChatAnthropic
+
+class ConflictState(TypedDict):
+    documents: List[dict]
+    conflicts: List[dict]
+    resolution: str
+
+def detect_conflicts(state: ConflictState) -> ConflictState:
+    conflicts = []
+    for i, doc1 in enumerate(state["documents"]):
+        for doc2 in state["documents"][i+1:]:
+            if "SHALL NOT" in doc1["content"] and "SHALL" in doc2["content"]:
+                conflicts.append({"doc1": doc1["id"], "doc2": doc2["id"], "type": "contradiction"})
+    return {"conflicts": conflicts}
+
+def resolve_conflicts(state: ConflictState) -> ConflictState:
+    if not state["conflicts"]:
+        return {"resolution": "No conflicts detected"}
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
+    response = llm.invoke(f"Resolve: {state['conflicts']}")
+    return {"resolution": response.content}
+
+workflow = StateGraph(ConflictState)
+workflow.add_node("detect", detect_conflicts)
+workflow.add_node("resolve", resolve_conflicts)
+workflow.add_edge(START, "detect")
+workflow.add_edge("detect", "resolve")
+workflow.add_edge("resolve", END)
+
+app = workflow.compile()
+result = app.invoke({"documents": [{"id": "d1", "content": "SHALL use X"}, {"id": "d2", "content": "SHALL NOT use X"}], "conflicts": [], "resolution": ""})
+print(f"Resolution: {result['resolution']}")
+```
+
+</details>
 
 ---
 

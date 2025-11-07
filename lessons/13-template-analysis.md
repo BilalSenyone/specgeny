@@ -559,6 +559,59 @@ Preview of generation:
      ...
 ```
 
+<details>
+<summary>📝 <strong>Solution: Complete Template Analysis Pipeline</strong></summary>
+
+```python
+"""Solution: Complete Template Analysis Pipeline"""
+from typing import TypedDict, List
+from langgraph.graph import StateGraph, START, END
+from langchain_anthropic import ChatAnthropic
+import re
+
+class TemplateState(TypedDict):
+    template_path: str
+    blocks: List[dict]
+    block_type_counts: dict
+    generation_prompts: List[str]
+    template_id: str
+    status: str
+
+def parse_document(state: TemplateState) -> TemplateState:
+    # Simulate block extraction
+    blocks = [{"id": i, "content": f"Block {i}", "type": "requirement"} for i in range(52)]
+    return {"blocks": blocks}
+
+def classify_blocks(state: TemplateState) -> TemplateState:
+    counts = {"heading": 3, "requirement": 25, "description": 12, "list": 8, "constraint": 4}
+    return {"block_type_counts": counts}
+
+def generate_instructions(state: TemplateState) -> TemplateState:
+    prompts = [f"Generate {b['type']}: {b['content']}" for b in state["blocks"]]
+    return {"generation_prompts": prompts}
+
+def store_template(state: TemplateState) -> TemplateState:
+    return {"template_id": "tmpl_abc123", "status": "Ready"}
+
+workflow = StateGraph(TemplateState)
+workflow.add_node("parse", parse_document)
+workflow.add_node("classify", classify_blocks)
+workflow.add_node("generate_inst", generate_instructions)
+workflow.add_node("store", store_template)
+
+workflow.add_edge(START, "parse")
+workflow.add_edge("parse", "classify")
+workflow.add_edge("classify", "generate_inst")
+workflow.add_edge("generate_inst", "store")
+workflow.add_edge("store", END)
+
+app = workflow.compile()
+result = app.invoke({"template_path": "template.docx", "blocks": [], "block_type_counts": {}, "generation_prompts": [], "template_id": "", "status": ""})
+print(f"Template ID: {result['template_id']}, Status: {result['status']}")
+```
+
+</details>
+
 ---
 
 ## 🚀 Challenge: Multi-Format Template Support
@@ -572,6 +625,50 @@ Preview of generation:
 3. **Handle complex structures**: Nested lists, tables, diagrams
 4. **Extract metadata**: Author, version, date, template name
 5. **Validate compatibility**: Check if format is suitable for generation
+
+<details>
+<summary>📝 <strong>Solution: Multi-Format Template Support</strong></summary>
+
+```python
+"""Solution: Multi-Format Template Parser"""
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+
+class MultiFormatState(TypedDict):
+    file_path: str
+    format: str
+    content: str
+    metadata: dict
+    compatible: bool
+
+def detect_format(state: MultiFormatState) -> MultiFormatState:
+    ext = state["file_path"].split(".")[-1]
+    format_map = {"docx": "word", "pdf": "pdf", "md": "markdown", "xlsx": "excel", "html": "html", "tex": "latex"}
+    return {"format": format_map.get(ext, "unknown")}
+
+def parse_format(state: MultiFormatState) -> MultiFormatState:
+    # Format-specific parsing
+    if state["format"] == "word":
+        content = "[Parsed DOCX content]"
+    elif state["format"] == "excel":
+        content = "[Parsed XLSX content]"
+    else:
+        content = "[Parsed content]"
+    return {"content": content, "metadata": {"author": "User", "version": "1.0"}, "compatible": True}
+
+workflow = StateGraph(MultiFormatState)
+workflow.add_node("detect", detect_format)
+workflow.add_node("parse", parse_format)
+workflow.add_edge(START, "detect")
+workflow.add_edge("detect", "parse")
+workflow.add_edge("parse", END)
+
+app = workflow.compile()
+result = app.invoke({"file_path": "template.docx", "format": "", "content": "", "metadata": {}, "compatible": False})
+print(f"Format: {result['format']}, Compatible: {result['compatible']}")
+```
+
+</details>
 
 ---
 

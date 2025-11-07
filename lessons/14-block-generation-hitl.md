@@ -665,6 +665,60 @@ async def review_block(spec_id: str, block_index: int, review: dict):
     pass
 ```
 
+<details>
+<summary>📝 <strong>Solution: Production-Ready Generation Pipeline</strong></summary>
+
+```python
+"""Solution: Production-Ready Block Generation with HITL"""
+from typing import TypedDict, List, Literal
+from langgraph.graph import StateGraph, START, END
+from langchain_anthropic import ChatAnthropic
+
+class GenState(TypedDict):
+    user_input: str
+    generated_blocks: List[dict]
+    approved_blocks: List[dict]
+    current_block: dict
+    user_feedback: str
+    status: str
+
+def generate_block(state: GenState) -> GenState:
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
+    response = llm.invoke(f"Generate requirement based on: {state['user_input']}")
+    block = {"id": f"FR-{len(state['generated_blocks'])+1:03d}", "content": response.content}
+    return {"generated_blocks": state["generated_blocks"] + [block], "current_block": block}
+
+def request_approval(state: GenState) -> GenState:
+    print(f"Block: {state['current_block']}")
+    feedback = input("Approve? (y/n/edit): ")
+    return {"user_feedback": feedback}
+
+def check_approval(state: GenState) -> Literal["approved", "edit", "reject"]:
+    if state["user_feedback"] == "y":
+        return "approved"
+    elif state["user_feedback"] == "edit":
+        return "edit"
+    return "reject"
+
+def approve_block(state: GenState) -> GenState:
+    return {"approved_blocks": state["approved_blocks"] + [state["current_block"]]}
+
+workflow = StateGraph(GenState)
+workflow.add_node("generate", generate_block)
+workflow.add_node("request", request_approval)
+workflow.add_node("approve", approve_block)
+
+workflow.add_edge(START, "generate")
+workflow.add_edge("generate", "request")
+workflow.add_conditional_edges("request", check_approval, {"approved": "approve", "edit": "generate", "reject": END})
+workflow.add_edge("approve", END)
+
+app = workflow.compile()
+print("Production-ready generation with HITL approval")
+```
+
+</details>
+
 ---
 
 ## 🚀 Challenge: Advanced Features
@@ -680,6 +734,49 @@ async def review_block(spec_id: str, block_index: int, review: dict):
 5. **A/B testing**: Generate 2 variants, let user choose
 6. **Undo/redo**: Allow users to revert to previous versions
 7. **Collaborative editing**: Multiple users can review simultaneously
+
+<details>
+<summary>📝 <strong>Solution: Advanced Features</strong></summary>
+
+```python
+"""Solution: Advanced features with parallel generation and quality scoring"""
+from typing import TypedDict, List
+from langgraph.graph import StateGraph, START, END
+from langchain_anthropic import ChatAnthropic
+import asyncio
+
+class AdvancedState(TypedDict):
+    blocks_to_generate: int
+    generated_blocks: List[dict]
+    quality_scores: List[float]
+
+async def parallel_generate(state: AdvancedState) -> AdvancedState:
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
+
+    async def gen_block(i):
+        response = await llm.ainvoke(f"Generate block {i}")
+        return {"id": f"FR-{i:03d}", "content": response.content}
+
+    blocks = await asyncio.gather(*[gen_block(i) for i in range(state["blocks_to_generate"])])
+    return {"generated_blocks": list(blocks)}
+
+def score_quality(state: AdvancedState) -> AdvancedState:
+    scores = [0.95 if "SHALL" in b["content"] else 0.7 for b in state["generated_blocks"]]
+    return {"quality_scores": scores}
+
+workflow = StateGraph(AdvancedState)
+workflow.add_node("generate", parallel_generate)
+workflow.add_node("score", score_quality)
+workflow.add_edge(START, "generate")
+workflow.add_edge("generate", "score")
+workflow.add_edge("score", END)
+
+app = workflow.compile()
+result = asyncio.run(app.ainvoke({"blocks_to_generate": 5, "generated_blocks": [], "quality_scores": []}))
+print(f"Generated {len(result['generated_blocks'])} blocks, avg quality: {sum(result['quality_scores'])/len(result['quality_scores']):.2f}")
+```
+
+</details>
 
 ---
 

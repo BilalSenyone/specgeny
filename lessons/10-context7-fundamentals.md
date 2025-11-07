@@ -584,6 +584,446 @@ test_queries = [
 ]
 ```
 
+<details>
+<summary>📝 <strong>Solution: Smart Document Explorer</strong></summary>
+
+```python
+"""
+Solution: Smart Document Explorer
+
+Progressive context loading with relevance scoring and confidence assessment
+"""
+
+from typing import TypedDict, List, Annotated, Literal
+from langgraph.graph import StateGraph, START, END
+from langchain_anthropic import ChatAnthropic
+from langchain.prompts import ChatPromptTemplate
+import operator
+import json
+
+class ExplorerState(TypedDict):
+    query: str
+    document_structure: dict
+    loaded_sections: Annotated[List[dict], operator.add]
+    total_tokens_loaded: int
+    confidence_score: float
+    exploration_path: Annotated[List[str], operator.add]
+    answer: str
+
+class DocumentStructure:
+    """Hierarchical document structure with token tracking"""
+
+    def __init__(self):
+        self.sections = {
+            "intro": {
+                "id": "intro",
+                "title": "Introduction",
+                "summary": "Overview of the authentication system and its goals",
+                "tokens": 150,
+                "subsections": ["overview", "scope", "audience"],
+                "content": """
+# Introduction
+
+This specification defines a comprehensive user authentication system
+supporting multiple authentication methods including email/password,
+OAuth 2.0, and multi-factor authentication (MFA).
+
+The system is designed to be secure, scalable, and user-friendly.
+                """.strip()
+            },
+            "auth_methods": {
+                "id": "auth_methods",
+                "title": "Authentication Methods",
+                "summary": "Details on email/password, OAuth, and MFA support",
+                "tokens": 2500,
+                "subsections": ["email_password", "oauth", "mfa"],
+                "content": """
+# Authentication Methods
+
+## Email/Password Authentication
+- Users can register with email and password
+- Passwords must meet complexity requirements
+- Passwords hashed with bcrypt (cost factor 12)
+
+## OAuth 2.0 Support
+- Support for Google, GitHub, Microsoft providers
+- PKCE flow for mobile/SPA applications
+- Token refresh and revocation
+
+## Multi-Factor Authentication
+- TOTP-based (Time-based One-Time Password)
+- SMS backup codes
+- Recovery codes (10 single-use codes)
+                """.strip()
+            },
+            "requirements": {
+                "id": "requirements",
+                "title": "Functional Requirements",
+                "summary": "Complete list of functional requirements",
+                "tokens": 3000,
+                "subsections": ["user_mgmt", "session_mgmt", "security"],
+                "content": """
+# Functional Requirements
+
+FR-001: The system SHALL authenticate users via email/password
+FR-002: The system SHALL support OAuth 2.0 providers (Google, GitHub, Microsoft)
+FR-003: The system SHALL implement MFA with TOTP
+FR-004: The system SHALL hash passwords with bcrypt (cost factor 12)
+FR-005: The system SHALL enforce password complexity requirements
+FR-006: The system SHALL implement session management with 24-hour expiry
+FR-007: The system SHALL provide password reset functionality
+FR-008: The system SHALL log all authentication events
+                """.strip()
+            },
+            "architecture": {
+                "id": "architecture",
+                "title": "System Architecture",
+                "summary": "High-level architecture and component design",
+                "tokens": 4000,
+                "subsections": ["components", "database", "api"],
+                "content": """
+# System Architecture
+
+## Components
+- Authentication Service (Node.js/Express)
+- Token Service (JWT generation/validation)
+- User Service (User CRUD operations)
+- Session Store (Redis)
+
+## Database Schema
+- Users table (id, email, password_hash, created_at)
+- OAuth accounts table (user_id, provider, provider_id)
+- MFA configs table (user_id, secret, backup_codes)
+- Sessions table (session_id, user_id, expires_at)
+
+## API Endpoints
+POST /auth/register
+POST /auth/login
+POST /auth/logout
+POST /auth/refresh
+GET /auth/oauth/:provider
+POST /auth/mfa/enable
+POST /auth/mfa/verify
+                """.strip()
+            },
+            "security": {
+                "id": "security",
+                "title": "Security Requirements",
+                "summary": "Security controls and compliance requirements",
+                "tokens": 2000,
+                "subsections": ["encryption", "compliance", "audit"],
+                "content": """
+# Security Requirements
+
+SEC-001: All passwords SHALL be hashed with bcrypt
+SEC-002: Session tokens SHALL expire after 24 hours
+SEC-003: API endpoints SHALL use HTTPS only
+SEC-004: Rate limiting SHALL be applied (5 login attempts per minute)
+SEC-005: Sensitive data SHALL be encrypted at rest
+SEC-006: Audit logs SHALL be retained for 90 days
+SEC-007: OAuth tokens SHALL be stored encrypted
+                """.strip()
+            }
+        }
+
+    def get_toc(self) -> dict:
+        """Get table of contents with metadata"""
+        return {
+            "title": "User Authentication System Specification",
+            "version": "2.1",
+            "total_tokens": sum(s["tokens"] for s in self.sections.values()),
+            "sections": [
+                {
+                    "id": s["id"],
+                    "title": s["title"],
+                    "summary": s["summary"],
+                    "tokens": s["tokens"],
+                    "subsections": s["subsections"]
+                }
+                for s in self.sections.values()
+            ]
+        }
+
+    def get_section_summary(self, section_id: str) -> str:
+        """Get summary of section (Level 2)"""
+        if section_id not in self.sections:
+            return None
+        return self.sections[section_id]["summary"]
+
+    def get_section_content(self, section_id: str) -> str:
+        """Get full section content (Level 3)"""
+        if section_id not in self.sections:
+            return None
+        return self.sections[section_id]["content"]
+
+    def get_subsection(self, section_id: str, subsection_id: str) -> str:
+        """Get specific subsection (Level 4)"""
+        if section_id not in self.sections:
+            return None
+        # Simplified - in production, would parse actual subsections
+        return f"[Detailed content of {subsection_id} subsection]"
+
+    def get_section_tokens(self, section_id: str) -> int:
+        """Get token count for section"""
+        if section_id not in self.sections:
+            return 0
+        return self.sections[section_id]["tokens"]
+
+# Document instance
+doc = DocumentStructure()
+
+def analyze_query(state: ExplorerState) -> ExplorerState:
+    """Understand what the query is asking for"""
+    print(f"\nAnalyzing query: {state['query']}")
+
+    # Get table of contents
+    toc = doc.get_toc()
+
+    return {
+        "document_structure": toc,
+        "exploration_path": ["analyze_query"]
+    }
+
+def identify_relevant_sections(state: ExplorerState) -> ExplorerState:
+    """Score all sections by relevance to query"""
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0)
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """You are analyzing document structure to identify relevant sections.
+        Given a user query and document table of contents, score each section's relevance.
+
+        Respond with a JSON array of objects with 'id' and 'relevance_score' (0.0-1.0).
+        Order by relevance score descending.
+
+        Example: [{"id": "auth_methods", "score": 0.9}, {"id": "security", "score": 0.6}]"""),
+        ("user", """Query: {query}
+
+        Document sections:
+        {sections}
+
+        Score each section's relevance:""")
+    ])
+
+    sections_str = "\n".join(
+        f"- {s['id']}: {s['title']} - {s['summary']} ({s['tokens']} tokens)"
+        for s in state["document_structure"]["sections"]
+    )
+
+    response = llm.invoke(
+        prompt.format_messages(
+            query=state["query"],
+            sections=sections_str
+        )
+    )
+
+    # Parse scores
+    try:
+        scores = json.loads(response.content)
+        print(f"\nRelevance scores:")
+        for score in scores:
+            print(f"  {score['id']}: {score['score']:.2f}")
+
+        return {
+            "section_scores": scores,
+            "exploration_path": ["identify_relevant_sections"]
+        }
+    except:
+        return {"section_scores": [], "exploration_path": ["identify_relevant_sections"]}
+
+def load_top_section(state: ExplorerState) -> ExplorerState:
+    """Load most relevant unloaded section"""
+    loaded_ids = [s["id"] for s in state.get("loaded_sections", [])]
+    scores = state.get("section_scores", [])
+
+    # Find highest scoring unloaded section
+    next_section = next(
+        (s for s in scores if s["id"] not in loaded_ids),
+        None
+    )
+
+    if not next_section:
+        print("\nNo more sections to load")
+        return {"exploration_path": ["load_top_section_none"]}
+
+    section_id = next_section["id"]
+    content = doc.get_section_content(section_id)
+    tokens = doc.get_section_tokens(section_id)
+
+    print(f"\nLoading section: {section_id} ({tokens} tokens)")
+
+    section_data = {
+        "id": section_id,
+        "content": content,
+        "tokens": tokens,
+        "relevance_score": next_section["score"]
+    }
+
+    return {
+        "loaded_sections": [section_data],
+        "total_tokens_loaded": state.get("total_tokens_loaded", 0) + tokens,
+        "exploration_path": [f"load_{section_id}"]
+    }
+
+def assess_confidence(state: ExplorerState) -> ExplorerState:
+    """Check if we can answer query with loaded context"""
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0)
+
+    loaded_content = "\n\n".join(
+        f"=== {s['id']} ===\n{s['content']}"
+        for s in state.get("loaded_sections", [])
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", """Assess if you can answer the query with the provided context.
+
+        Respond with a JSON object:
+        {
+          "can_answer": true/false,
+          "confidence": 0.0-1.0,
+          "missing_info": "what additional information is needed (if any)"
+        }"""),
+        ("user", """Query: {query}
+
+        Loaded context:
+        {context}
+
+        Assessment:""")
+    ])
+
+    response = llm.invoke(
+        prompt.format_messages(
+            query=state["query"],
+            context=loaded_content
+        )
+    )
+
+    try:
+        assessment = json.loads(response.content)
+        confidence = assessment.get("confidence", 0.0)
+
+        print(f"\nConfidence: {confidence:.2f}")
+        if not assessment.get("can_answer"):
+            print(f"Missing: {assessment.get('missing_info')}")
+
+        return {
+            "confidence_score": confidence,
+            "can_answer": assessment.get("can_answer", False),
+            "exploration_path": ["assess_confidence"]
+        }
+    except:
+        return {
+            "confidence_score": 0.5,
+            "can_answer": False,
+            "exploration_path": ["assess_confidence_error"]
+        }
+
+def answer_query(state: ExplorerState) -> ExplorerState:
+    """Generate answer from loaded context"""
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022", temperature=0)
+
+    loaded_content = "\n\n".join(
+        f"=== {s['id']} ===\n{s['content']}"
+        for s in state.get("loaded_sections", [])
+    )
+
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "Answer the question using only the provided context. Be specific and cite sections."),
+        ("user", """Context:
+        {context}
+
+        Question: {query}
+
+        Answer:""")
+    ])
+
+    response = llm.invoke(
+        prompt.format_messages(
+            context=loaded_content,
+            query=state["query"]
+        )
+    )
+
+    return {
+        "answer": response.content,
+        "exploration_path": ["answer_query"]
+    }
+
+def check_progress(state: ExplorerState) -> Literal["answer", "load_more", "max_reached"]:
+    """Decide next step"""
+    confidence = state.get("confidence_score", 0.0)
+    tokens_loaded = state.get("total_tokens_loaded", 0)
+    can_answer = state.get("can_answer", False)
+
+    # Confidence threshold reached
+    if can_answer or confidence >= 0.8:
+        return "answer"
+
+    # Too many tokens loaded
+    if tokens_loaded >= 8000:
+        print("\nMax token budget reached")
+        return "max_reached"
+
+    # Load more context
+    return "load_more"
+
+# Build workflow
+workflow = StateGraph(ExplorerState)
+workflow.add_node("analyze", analyze_query)
+workflow.add_node("identify", identify_relevant_sections)
+workflow.add_node("load", load_top_section)
+workflow.add_node("assess", assess_confidence)
+workflow.add_node("answer", answer_query)
+
+workflow.add_edge(START, "analyze")
+workflow.add_edge("analyze", "identify")
+workflow.add_edge("identify", "load")
+workflow.add_edge("load", "assess")
+workflow.add_conditional_edges(
+    "assess",
+    check_progress,
+    {
+        "answer": "answer",
+        "load_more": "load",
+        "max_reached": "answer"
+    }
+)
+workflow.add_edge("answer", END)
+
+app = workflow.compile()
+
+# Test
+test_queries = [
+    "What authentication methods are supported?",
+    "How is the database architected?",
+    "What are the security requirements?"
+]
+
+for query in test_queries:
+    print(f"\n{'='*70}")
+    print(f"Query: {query}")
+    print('='*70)
+
+    result = app.invoke({
+        "query": query,
+        "document_structure": {},
+        "loaded_sections": [],
+        "total_tokens_loaded": 0,
+        "confidence_score": 0.0,
+        "exploration_path": [],
+        "answer": ""
+    })
+
+    print(f"\n{'='*70}")
+    print("Results:")
+    print(f"  Sections loaded: {[s['id'] for s in result['loaded_sections']]}")
+    print(f"  Total tokens: {result['total_tokens_loaded']}")
+    print(f"  Confidence: {result['confidence_score']:.2f}")
+    print(f"\nAnswer:\n{result['answer']}")
+    print('='*70)
+```
+
+</details>
+
 ---
 
 ## 🚀 Challenge: Adaptive Context Budget
@@ -599,6 +1039,183 @@ Build a system that:
 4. **Summarizes** sections if too large
 5. **Caches** loaded sections across queries
 6. **Reports** token efficiency metrics
+
+<details>
+<summary>📝 <strong>Solution: Adaptive Context Budget</strong></summary>
+
+```python
+"""
+Solution: Adaptive Context Budget
+
+Token-aware context loading with caching and summarization
+"""
+
+from typing import TypedDict, List, Dict, Annotated
+from langgraph.graph import StateGraph, START, END
+from langchain_anthropic import ChatAnthropic
+import operator
+
+class BudgetState(TypedDict):
+    query: str
+    token_budget: int
+    tokens_used: int
+    cached_sections: Dict[str, str]
+    loaded_sections: Annotated[List[dict], operator.add]
+    answer: str
+    metrics: dict
+
+class TokenBudgetManager:
+    """Manages token budget and caching"""
+
+    def __init__(self, budget: int = 10000):
+        self.budget = budget
+        self.cache = {}  # section_id -> content
+        self.section_metadata = {
+            "intro": {"tokens": 150, "priority": 0.3},
+            "auth": {"tokens": 2500, "priority": 0.9},
+            "requirements": {"tokens": 3000, "priority": 0.8},
+            "architecture": {"tokens": 4000, "priority": 0.7},
+            "testing": {"tokens": 1500, "priority": 0.5}
+        }
+
+    def can_load(self, section_id: str, tokens_used: int) -> bool:
+        """Check if section fits in budget"""
+        section_tokens = self.section_metadata.get(section_id, {}).get("tokens", 0)
+        return tokens_used + section_tokens <= self.budget
+
+    def get_summary(self, section_id: str) -> tuple:
+        """Get summarized version (1/3 tokens)"""
+        full_tokens = self.section_metadata.get(section_id, {}).get("tokens", 0)
+        summary_tokens = full_tokens // 3
+        return f"[Summary of {section_id}]", summary_tokens
+
+    def prioritize_sections(self, relevance_scores: Dict[str, float]) -> List[tuple]:
+        """Prioritize by relevance * priority"""
+        scored = []
+        for section_id, relevance in relevance_scores.items():
+            if section_id in self.section_metadata:
+                priority = self.section_metadata[section_id]["priority"]
+                combined_score = relevance * priority
+                scored.append((section_id, combined_score))
+
+        return sorted(scored, key=lambda x: x[1], reverse=True)
+
+budget_mgr = TokenBudgetManager(budget=8000)
+
+def load_with_budget(state: BudgetState) -> BudgetState:
+    """Load sections within token budget"""
+
+    # Simulate relevance scores
+    relevance = {
+        "intro": 0.3,
+        "auth": 0.95,
+        "requirements": 0.8,
+        "architecture": 0.6,
+        "testing": 0.4
+    }
+
+    prioritized = budget_mgr.prioritize_sections(relevance)
+    tokens_used = state.get("tokens_used", 0)
+    loaded = []
+    cached = state.get("cached_sections", {})
+
+    print(f"\nToken budget: {budget_mgr.budget}")
+    print(f"Tokens used: {tokens_used}\n")
+
+    for section_id, score in prioritized:
+        # Check cache first
+        if section_id in cached:
+            print(f"  ✓ {section_id}: Using cached (0 tokens)")
+            loaded.append({"id": section_id, "content": cached[section_id], "tokens": 0, "cached": True})
+            continue
+
+        # Try to load full section
+        if budget_mgr.can_load(section_id, tokens_used):
+            tokens = budget_mgr.section_metadata[section_id]["tokens"]
+            content = f"[Full content of {section_id}]"
+            print(f"  ✓ {section_id}: Loaded full ({tokens} tokens)")
+            loaded.append({"id": section_id, "content": content, "tokens": tokens, "cached": False})
+            cached[section_id] = content
+            tokens_used += tokens
+        else:
+            # Try summary instead
+            summary, summary_tokens = budget_mgr.get_summary(section_id)
+            if tokens_used + summary_tokens <= budget_mgr.budget:
+                print(f"  ~ {section_id}: Loaded summary ({summary_tokens} tokens)")
+                loaded.append({"id": section_id, "content": summary, "tokens": summary_tokens, "summarized": True})
+                tokens_used += summary_tokens
+            else:
+                print(f"  ✗ {section_id}: Budget exhausted")
+                break
+
+    return {
+        "loaded_sections": loaded,
+        "tokens_used": tokens_used,
+        "cached_sections": cached
+    }
+
+def generate_answer(state: BudgetState) -> BudgetState:
+    """Generate answer with loaded context"""
+
+    content = "\n\n".join(s["content"] for s in state.get("loaded_sections", []))
+    answer = f"Answer based on {len(state.get('loaded_sections', []))} sections"
+
+    # Calculate metrics
+    total_sections = len(state.get("loaded_sections", []))
+    cached_sections = sum(1 for s in state.get("loaded_sections", []) if s.get("cached", False))
+    summarized_sections = sum(1 for s in state.get("loaded_sections", []) if s.get("summarized", False))
+
+    metrics = {
+        "tokens_used": state.get("tokens_used", 0),
+        "tokens_budget": budget_mgr.budget,
+        "efficiency": 1 - (state.get("tokens_used", 0) / budget_mgr.budget),
+        "sections_loaded": total_sections,
+        "sections_cached": cached_sections,
+        "sections_summarized": summarized_sections
+    }
+
+    return {"answer": answer, "metrics": metrics}
+
+# Build workflow
+workflow = StateGraph(BudgetState)
+workflow.add_node("load", load_with_budget)
+workflow.add_node("answer", generate_answer)
+
+workflow.add_edge(START, "load")
+workflow.add_edge("load", "answer")
+workflow.add_edge("answer", END)
+
+app = workflow.compile()
+
+# Test with multiple queries (showing caching effect)
+queries = ["Query 1", "Query 2", "Query 3"]
+
+for i, query in enumerate(queries):
+    print(f"\n{'='*60}")
+    print(f"Query {i+1}: {query}")
+    print('='*60)
+
+    result = app.invoke({
+        "query": query,
+        "token_budget": 8000,
+        "tokens_used": 0,
+        "cached_sections": result.get("cached_sections", {}) if i > 0 else {},
+        "loaded_sections": [],
+        "answer": "",
+        "metrics": {}
+    })
+
+    print(f"\n{'='*60}")
+    print("Metrics:")
+    for key, value in result["metrics"].items():
+        if isinstance(value, float):
+            print(f"  {key}: {value:.2%}" if "efficiency" in key else f"  {key}: {value:.2f}")
+        else:
+            print(f"  {key}: {value}")
+    print('='*60)
+```
+
+</details>
 
 ---
 

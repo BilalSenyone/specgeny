@@ -580,6 +580,102 @@ test_docs = [
 ]
 ```
 
+<details>
+<summary>📝 <strong>Solution: Multi-Document RAG System</strong></summary>
+
+```python
+"""Solution: Multi-Document RAG System with vector store and source tracking"""
+
+from typing import TypedDict, List, Annotated
+from langgraph.graph import StateGraph, START, END
+from langchain_anthropic import ChatAnthropic
+from langchain.text_splitter import RecursiveCharacterTextSplitter
+from langchain_community.vectorstores import FAISS
+from langchain_community.embeddings import HuggingFaceEmbeddings
+import operator
+
+class MultiDocRAGState(TypedDict):
+    query: str
+    documents: List[dict]
+    retrieved_chunks: Annotated[List[dict], operator.add]
+    answer: str
+    source_documents: List[str]
+
+class DocumentIndexer:
+    def __init__(self):
+        self.vectorstore = None
+        self.embeddings = HuggingFaceEmbeddings()
+        self.splitter = RecursiveCharacterTextSplitter(chunk_size=500, chunk_overlap=50)
+        self.document_metadata = {}
+
+    def add_document(self, doc_id: str, title: str, content: str):
+        chunks = self.splitter.split_text(content)
+        metadatas = [{"doc_id": doc_id, "doc_title": title, "chunk_index": i} for i in range(len(chunks))]
+
+        if self.vectorstore is None:
+            self.vectorstore = FAISS.from_texts(chunks, self.embeddings, metadatas=metadatas)
+        else:
+            self.vectorstore.add_texts(chunks, metadatas=metadatas)
+
+        self.document_metadata[doc_id] = {"title": title, "num_chunks": len(chunks)}
+
+    def retrieve(self, query: str, k: int = 5) -> List[dict]:
+        if not self.vectorstore:
+            return []
+        results = self.vectorstore.similarity_search_with_score(query, k=k)
+        return [{"content": doc.page_content, "doc_id": doc.metadata["doc_id"],
+                 "doc_title": doc.metadata["doc_title"], "score": float(score)}
+                for doc, score in results]
+
+indexer = DocumentIndexer()
+
+def index_documents(state: MultiDocRAGState) -> MultiDocRAGState:
+    for doc in state["documents"]:
+        indexer.add_document(doc["id"], doc["title"], doc["content"])
+    return {}
+
+def retrieve_chunks(state: MultiDocRAGState) -> MultiDocRAGState:
+    chunks = indexer.retrieve(state["query"], k=5)
+    return {"retrieved_chunks": chunks}
+
+def generate_answer(state: MultiDocRAGState) -> MultiDocRAGState:
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
+    context = "\n\n".join(f"[{c['doc_title']}]\n{c['content']}" for c in state["retrieved_chunks"])
+
+    response = llm.invoke(f"Context:\n{context}\n\nQuestion: {state['query']}\n\nAnswer with citations:")
+
+    sources = list(set(c["doc_title"] for c in state["retrieved_chunks"]))
+    return {"answer": response.content, "source_documents": sources}
+
+workflow = StateGraph(MultiDocRAGState)
+workflow.add_node("index", index_documents)
+workflow.add_node("retrieve", retrieve_chunks)
+workflow.add_node("answer", generate_answer)
+
+workflow.add_edge(START, "index")
+workflow.add_edge("index", "retrieve")
+workflow.add_edge("retrieve", "answer")
+workflow.add_edge("answer", END)
+
+app = workflow.compile()
+
+# Test
+result = app.invoke({
+    "query": "What are the authentication requirements?",
+    "documents": [
+        {"id": "auth", "title": "Auth Spec", "content": "FR-001: Email/password auth..."},
+        {"id": "security", "title": "Security", "content": "SEC-001: Bcrypt hashing..."}
+    ],
+    "retrieved_chunks": [],
+    "answer": "",
+    "source_documents": []
+})
+
+print(f"Answer: {result['answer']}\nSources: {result['source_documents']}")
+```
+
+</details>
+
 ---
 
 ## 🚀 Challenge: RAG with Confidence Scoring
@@ -594,6 +690,60 @@ Create a system that:
 3. **Detects hallucinations** (is answer consistent with context?)
 4. **Provides alternatives** when confidence is low
 5. **Explains reasoning** (why this answer, which sources support it)
+
+<details>
+<summary>📝 <strong>Solution: RAG with Confidence Scoring</strong></summary>
+
+```python
+"""Solution: RAG with confidence scoring and hallucination detection"""
+
+from typing import TypedDict
+from langgraph.graph import StateGraph, START, END
+from langchain_anthropic import ChatAnthropic
+import json
+
+class ConfidenceRAGState(TypedDict):
+    query: str
+    context: str
+    answer: str
+    confidence_score: float
+    reasoning: str
+    should_answer: bool
+
+def assess_retrieval_quality(state: ConfidenceRAGState) -> ConfidenceRAGState:
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
+    response = llm.invoke(f"Rate relevance (0-1) of context to query:\nQuery: {state['query']}\nContext: {state['context']}")
+
+    try:
+        score = float(json.loads(response.content)["score"])
+        return {"confidence_score": score}
+    except:
+        return {"confidence_score": 0.5}
+
+def generate_with_confidence(state: ConfidenceRAGState) -> ConfidenceRAGState:
+    if state["confidence_score"] < 0.5:
+        return {"answer": "I don't have enough relevant information to answer.", "should_answer": False}
+
+    llm = ChatAnthropic(model="claude-3-5-sonnet-20241022")
+    response = llm.invoke(f"Context: {state['context']}\n\nQuestion: {state['query']}\n\nProvide answer with confidence and reasoning:")
+
+    return {"answer": response.content, "should_answer": True, "reasoning": "Based on provided context"}
+
+workflow = StateGraph(ConfidenceRAGState)
+workflow.add_node("assess", assess_retrieval_quality)
+workflow.add_node("generate", generate_with_confidence)
+
+workflow.add_edge(START, "assess")
+workflow.add_edge("assess", "generate")
+workflow.add_edge("generate", END)
+
+app = workflow.compile()
+
+result = app.invoke({"query": "What is authentication?", "context": "Auth spec...", "answer": "", "confidence_score": 0, "reasoning": "", "should_answer": True})
+print(f"Confidence: {result['confidence_score']:.2f}\nAnswer: {result['answer']}")
+```
+
+</details>
 
 ---
 

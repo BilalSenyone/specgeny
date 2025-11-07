@@ -1,0 +1,21 @@
+# Core LangChain packages
+langchain-core>=0.3.0
+langchain-openai>=0.2.0
+langchain-anthropic>=0.2.0
+
+# LangGraph for workflows
+langgraph>=0.2.0
+
+# Data validation
+pydantic>=2.0.0
+
+# Environment variables
+python-dotenv>=1.0.0
+
+# Graph visualization (used in dependency analyzer)
+networkx>=3.0
+
+# Code formatting
+black>=24.0.0
+yapf>=0.40.0
+

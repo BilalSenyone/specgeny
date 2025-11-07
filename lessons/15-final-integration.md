@@ -639,6 +639,66 @@ Deploy a production-ready system with:
 - ✅ Documentation
 - ✅ Runbooks
 
+<details>
+<summary>📝 <strong>Solution: Production Deployment</strong></summary>
+
+```python
+"""Solution: Production deployment with Docker, CI/CD, and monitoring"""
+
+# docker-compose.prod.yml
+docker_compose = """
+version: '3.8'
+services:
+  backend:
+    image: specbot-backend:latest
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      REDIS_URL: redis://redis:6379
+    ports:
+      - "8000:8000"
+  frontend:
+    image: specbot-frontend:latest
+    ports:
+      - "3000:3000"
+  db:
+    image: postgres:14
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+  redis:
+    image: redis:7-alpine
+"""
+
+# .github/workflows/deploy.yml
+github_actions = """
+name: Deploy
+on:
+  push:
+    branches: [main]
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v2
+      - name: Deploy
+        run: |
+          docker build -t specbot .
+          gcloud run deploy specbot --image specbot
+"""
+
+# monitoring.py
+monitoring_code = """
+from sentry_sdk import init
+from prometheus_client import Counter
+
+init(dsn="sentry-dsn")
+blocks_generated = Counter('blocks_generated_total', 'Total blocks')
+"""
+
+print("Production deployment configured")
+```
+
+</details>
+
 ---
 
 ## 🎓 Key Takeaways

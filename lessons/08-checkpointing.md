@@ -475,6 +475,231 @@ Total time: 32.4 seconds
 Total blocks: 15
 ```
 
+<details>
+<summary>📝 <strong>Solution: Resume-Anywhere Specification Generator</strong></summary>
+
+```python
+"""
+Solution: Resume-Anywhere Specification Generator
+
+Complete implementation with pause/resume capabilities
+"""
+
+from typing import TypedDict, List
+from langgraph.graph import StateGraph, START, END
+from langgraph.checkpoint.postgres import PostgresSaver
+from datetime import datetime
+import time
+import sys
+
+class ResumeState(TypedDict):
+    spec_id: str
+    blocks: List[dict]
+    current_index: int
+    total_blocks: int
+    started_at: str
+    last_updated: str
+    status: str  # "running", "paused", "completed"
+
+def generate_block_node(state: ResumeState) -> ResumeState:
+    """Generate one block with progress tracking"""
+    block_num = state["current_index"] + 1
+
+    print(f"[{block_num}/{state['total_blocks']}] Generating block BLK-{block_num:03d}...", end=" ")
+
+    start_time = time.time()
+    time.sleep(2)  # Simulate processing time
+    elapsed = time.time() - start_time
+
+    block = {
+        "id": f"BLK-{block_num:03d}",
+        "content": f"Content for block {block_num}",
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+    print(f"✓ ({elapsed:.1f}s)")
+
+    return {
+        "blocks": state["blocks"] + [block],
+        "current_index": block_num,
+        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "running"
+    }
+
+def save_checkpoint_node(state: ResumeState) -> ResumeState:
+    """Explicit checkpoint save (for critical points)"""
+    return {
+        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    }
+
+def check_completion(state: ResumeState) -> str:
+    """Route based on completion status"""
+    if state["current_index"] >= state["total_blocks"]:
+        return "done"
+    return "continue"
+
+# Build workflow
+workflow = StateGraph(ResumeState)
+workflow.add_node("generate", generate_block_node)
+workflow.add_node("checkpoint", save_checkpoint_node)
+
+workflow.add_edge(START, "generate")
+workflow.add_edge("generate", "checkpoint")
+workflow.add_conditional_edges(
+    "checkpoint",
+    check_completion,
+    {
+        "continue": "generate",
+        "done": END
+    }
+)
+
+# Database connection
+DB_URI = "postgresql://postgres:postgres@localhost:5432/specbot"
+
+def get_app():
+    """Get compiled app with checkpointer"""
+    checkpointer = PostgresSaver.from_conn_string(DB_URI)
+    checkpointer.setup()  # Create tables if needed
+    return workflow.compile(checkpointer=checkpointer)
+
+def start_spec(spec_id: str):
+    """Start new specification"""
+    app = get_app()
+
+    config = {"configurable": {"thread_id": spec_id}}
+    initial = {
+        "spec_id": spec_id,
+        "blocks": [],
+        "current_index": 0,
+        "total_blocks": 15,
+        "started_at": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "last_updated": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+        "status": "running"
+    }
+
+    print(f"=== Starting Specification {spec_id} ===")
+    print(f"Total blocks: {initial['total_blocks']}\n")
+
+    try:
+        result = app.invoke(initial, config=config)
+
+        print(f"\n✓ Specification {spec_id} completed!")
+        total_time = (datetime.now() - datetime.strptime(
+            result["started_at"], "%Y-%m-%d %H:%M:%S"
+        )).total_seconds()
+        print(f"Total time: {total_time:.1f} seconds")
+        print(f"Total blocks: {len(result['blocks'])}")
+
+    except KeyboardInterrupt:
+        current_state = app.get_state(config)
+        progress = current_state.values["current_index"]
+        total = current_state.values["total_blocks"]
+
+        print(f"\n\n⚠ Interrupted at block {progress}/{total}")
+        print("State saved. Resume with:")
+        print(f"  python ex08_resume_anywhere.py resume {spec_id}")
+
+def resume_spec(spec_id: str):
+    """Resume existing specification"""
+    app = get_app()
+
+    config = {"configurable": {"thread_id": spec_id}}
+    current_state = app.get_state(config)
+
+    if not current_state or not current_state.values:
+        print(f"Error: No specification found with ID '{spec_id}'")
+        sys.exit(1)
+
+    progress = current_state.values["current_index"]
+    total = current_state.values["total_blocks"]
+
+    print(f"=== Resuming Specification {spec_id} ===")
+    print(f"Progress: {progress}/{total} blocks completed\n")
+
+    try:
+        result = app.invoke(None, config=config)
+
+        print(f"\n✓ Specification {spec_id} completed!")
+        total_time = (datetime.now() - datetime.strptime(
+            result["started_at"], "%Y-%m-%d %H:%M:%S"
+        )).total_seconds()
+        print(f"Total time: {total_time:.1f} seconds")
+        print(f"Total blocks: {len(result['blocks'])}")
+
+    except KeyboardInterrupt:
+        current_state = app.get_state(config)
+        progress = current_state.values["current_index"]
+        total = current_state.values["total_blocks"]
+
+        print(f"\n\n⚠ Interrupted at block {progress}/{total}")
+        print("State saved. Resume with:")
+        print(f"  python ex08_resume_anywhere.py resume {spec_id}")
+
+def show_status(spec_id: str):
+    """Show specification status"""
+    app = get_app()
+
+    config = {"configurable": {"thread_id": spec_id}}
+    current_state = app.get_state(config)
+
+    if not current_state or not current_state.values:
+        print(f"Error: No specification found with ID '{spec_id}'")
+        sys.exit(1)
+
+    state = current_state.values
+    progress = state["current_index"]
+    total = state["total_blocks"]
+    percentage = (progress / total) * 100
+
+    print(f"Specification: {state['spec_id']}")
+
+    if progress >= total:
+        print("Status: Completed")
+    elif progress > 0:
+        print("Status: Paused")
+    else:
+        print("Status: Not Started")
+
+    print(f"Progress: {progress}/{total} blocks ({percentage:.0f}%)")
+    print(f"Started: {state['started_at']}")
+    print(f"Last updated: {state['last_updated']}")
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Usage:")
+        print("  python ex08_resume_anywhere.py start <spec_id>")
+        print("  python ex08_resume_anywhere.py resume <spec_id>")
+        print("  python ex08_resume_anywhere.py status <spec_id>")
+        sys.exit(1)
+
+    command = sys.argv[1]
+
+    if command == "start":
+        if len(sys.argv) < 3:
+            print("Error: spec_id required")
+            sys.exit(1)
+        start_spec(sys.argv[2])
+
+    elif command == "resume":
+        if len(sys.argv) < 3:
+            print("Error: spec_id required")
+            sys.exit(1)
+        resume_spec(sys.argv[2])
+
+    elif command == "status":
+        if len(sys.argv) < 3:
+            print("Error: spec_id required")
+            sys.exit(1)
+        show_status(sys.argv[2])
+
+    else:
+        print(f"Unknown command: {command}")
+        sys.exit(1)
+```
+
+</details>
+
 ---
 
 ## 🚀 Challenge: Time-Travel Debugger
@@ -557,6 +782,346 @@ class TimeTravel:
 
 # TODO: Implement CLI interface for time-travel commands
 ```
+
+<details>
+<summary>📝 <strong>Solution: Time-Travel Debugger</strong></summary>
+
+```python
+"""
+Solution: Time-Travel Debugger
+
+Complete implementation with state navigation and forking capabilities
+"""
+
+from langgraph.checkpoint.postgres import PostgresSaver
+from langgraph.graph import StateGraph, START, END
+from typing import TypedDict, List, Optional
+import json
+from datetime import datetime
+import sys
+
+class DebugState(TypedDict):
+    counter: int
+    operations: List[str]
+    timestamp: str
+
+def increment_node(state: DebugState) -> DebugState:
+    """Increment counter"""
+    new_count = state["counter"] + 1
+    return {
+        "counter": new_count,
+        "operations": state["operations"] + [f"increment to {new_count}"],
+        "timestamp": datetime.now().isoformat()
+    }
+
+def double_node(state: DebugState) -> DebugState:
+    """Double counter"""
+    new_count = state["counter"] * 2
+    return {
+        "counter": new_count,
+        "operations": state["operations"] + [f"double to {new_count}"],
+        "timestamp": datetime.now().isoformat()
+    }
+
+def check_continue(state: DebugState) -> str:
+    """Continue if counter < 100"""
+    if state["counter"] >= 100:
+        return "done"
+    return "continue"
+
+# Build workflow
+workflow = StateGraph(DebugState)
+workflow.add_node("increment", increment_node)
+workflow.add_node("double", double_node)
+
+workflow.add_edge(START, "increment")
+workflow.add_edge("increment", "double")
+workflow.add_conditional_edges(
+    "double",
+    check_continue,
+    {
+        "continue": "increment",
+        "done": END
+    }
+)
+
+DB_URI = "postgresql://postgres:postgres@localhost:5432/specbot"
+
+class TimeTravel:
+    """Navigate workflow state history"""
+
+    def __init__(self, app, config):
+        self.app = app
+        self.config = config
+
+    def list_checkpoints(self) -> List[dict]:
+        """List all checkpoints with metadata"""
+        history = self.app.get_state_history(self.config)
+
+        checkpoints = []
+        for i, checkpoint in enumerate(history):
+            metadata = checkpoint.metadata or {}
+            values = checkpoint.values or {}
+
+            checkpoints.append({
+                "index": i,
+                "node": metadata.get("source", "N/A"),
+                "step": metadata.get("step", "N/A"),
+                "timestamp": metadata.get("ts", "N/A"),
+                "counter": values.get("counter", "N/A"),
+                "operations": len(values.get("operations", [])),
+                "checkpoint_id": checkpoint.config["configurable"].get("checkpoint_id", "N/A")
+            })
+
+        return checkpoints
+
+    def restore_to(self, checkpoint_index: int) -> dict:
+        """Restore to specific checkpoint"""
+        history = list(self.app.get_state_history(self.config))
+
+        if checkpoint_index >= len(history):
+            raise ValueError(f"Invalid checkpoint index: {checkpoint_index}")
+
+        checkpoint = history[checkpoint_index]
+
+        print(f"Restoring to checkpoint {checkpoint_index}...")
+        print(f"  Node: {checkpoint.metadata.get('source', 'N/A')}")
+        print(f"  Step: {checkpoint.metadata.get('step', 'N/A')}")
+
+        return checkpoint.values
+
+    def diff(self, checkpoint_a: int, checkpoint_b: int) -> dict:
+        """Show differences between two checkpoints"""
+        history = list(self.app.get_state_history(self.config))
+
+        if checkpoint_a >= len(history) or checkpoint_b >= len(history):
+            raise ValueError("Invalid checkpoint indices")
+
+        state_a = history[checkpoint_a].values
+        state_b = history[checkpoint_b].values
+
+        diff = {
+            "checkpoint_a": checkpoint_a,
+            "checkpoint_b": checkpoint_b,
+            "differences": {}
+        }
+
+        # Compare all keys
+        all_keys = set(state_a.keys()) | set(state_b.keys())
+
+        for key in all_keys:
+            val_a = state_a.get(key)
+            val_b = state_b.get(key)
+
+            if val_a != val_b:
+                diff["differences"][key] = {
+                    "checkpoint_a": val_a,
+                    "checkpoint_b": val_b
+                }
+
+        return diff
+
+    def fork_from(self, checkpoint_index: int, new_thread_id: str) -> dict:
+        """Create alternate timeline from checkpoint"""
+        history = list(self.app.get_state_history(self.config))
+
+        if checkpoint_index >= len(history):
+            raise ValueError(f"Invalid checkpoint index: {checkpoint_index}")
+
+        checkpoint = history[checkpoint_index]
+        state = checkpoint.values
+
+        # Create new config with different thread_id
+        new_config = {"configurable": {"thread_id": new_thread_id}}
+
+        print(f"Forking from checkpoint {checkpoint_index}...")
+        print(f"  Original thread: {self.config['configurable']['thread_id']}")
+        print(f"  New thread: {new_thread_id}")
+        print(f"  Starting state: counter={state.get('counter')}")
+
+        # Start new workflow from this state
+        result = self.app.invoke(state, config=new_config)
+
+        return {
+            "new_thread_id": new_thread_id,
+            "fork_point": checkpoint_index,
+            "result": result
+        }
+
+    def export_history(self, output_file: str):
+        """Export full state history to JSON"""
+        history = self.app.get_state_history(self.config)
+
+        export_data = {
+            "thread_id": self.config["configurable"]["thread_id"],
+            "exported_at": datetime.now().isoformat(),
+            "checkpoints": []
+        }
+
+        for i, checkpoint in enumerate(history):
+            export_data["checkpoints"].append({
+                "index": i,
+                "node": checkpoint.metadata.get("source", "N/A"),
+                "step": checkpoint.metadata.get("step", "N/A"),
+                "timestamp": checkpoint.metadata.get("ts", "N/A"),
+                "values": checkpoint.values,
+                "metadata": checkpoint.metadata
+            })
+
+        with open(output_file, "w") as f:
+            json.dump(export_data, f, indent=2, default=str)
+
+        print(f"Exported {len(export_data['checkpoints'])} checkpoints to {output_file}")
+
+def get_app():
+    """Get compiled app with checkpointer"""
+    checkpointer = PostgresSaver.from_conn_string(DB_URI)
+    checkpointer.setup()
+    return workflow.compile(checkpointer=checkpointer)
+
+def run_workflow(thread_id: str):
+    """Run demo workflow"""
+    app = get_app()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    initial = {
+        "counter": 1,
+        "operations": [],
+        "timestamp": datetime.now().isoformat()
+    }
+
+    print(f"Running workflow with thread_id: {thread_id}\n")
+    result = app.invoke(initial, config=config)
+
+    print(f"\nWorkflow completed!")
+    print(f"Final counter: {result['counter']}")
+    print(f"Total operations: {len(result['operations'])}")
+
+def list_history(thread_id: str):
+    """List checkpoint history"""
+    app = get_app()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    tt = TimeTravel(app, config)
+    checkpoints = tt.list_checkpoints()
+
+    if not checkpoints:
+        print(f"No checkpoints found for thread_id: {thread_id}")
+        return
+
+    print(f"=== Checkpoint History for {thread_id} ===\n")
+    print(f"{'Index':<6} {'Node':<12} {'Step':<6} {'Counter':<8} {'Ops':<6}")
+    print("-" * 50)
+
+    for cp in checkpoints:
+        print(f"{cp['index']:<6} {cp['node']:<12} {cp['step']:<6} {cp['counter']:<8} {cp['operations']:<6}")
+
+def restore_checkpoint(thread_id: str, checkpoint_index: int):
+    """Restore to checkpoint"""
+    app = get_app()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    tt = TimeTravel(app, config)
+    state = tt.restore_to(checkpoint_index)
+
+    print(f"\nRestored state:")
+    print(json.dumps(state, indent=2, default=str))
+
+def diff_checkpoints(thread_id: str, index_a: int, index_b: int):
+    """Show diff between checkpoints"""
+    app = get_app()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    tt = TimeTravel(app, config)
+    diff = tt.diff(index_a, index_b)
+
+    print(f"=== Diff between checkpoint {index_a} and {index_b} ===\n")
+
+    if not diff["differences"]:
+        print("No differences found")
+        return
+
+    for key, values in diff["differences"].items():
+        print(f"{key}:")
+        print(f"  Checkpoint {index_a}: {values['checkpoint_a']}")
+        print(f"  Checkpoint {index_b}: {values['checkpoint_b']}")
+        print()
+
+def fork_workflow(thread_id: str, checkpoint_index: int, new_thread_id: str):
+    """Fork workflow from checkpoint"""
+    app = get_app()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    tt = TimeTravel(app, config)
+    result = tt.fork_from(checkpoint_index, new_thread_id)
+
+    print(f"\nFork completed!")
+    print(f"Final counter: {result['result']['counter']}")
+
+def export_history(thread_id: str, output_file: str):
+    """Export history to JSON"""
+    app = get_app()
+    config = {"configurable": {"thread_id": thread_id}}
+
+    tt = TimeTravel(app, config)
+    tt.export_history(output_file)
+
+if __name__ == "__main__":
+    if len(sys.argv) < 2:
+        print("Time-Travel Debugger")
+        print("\nUsage:")
+        print("  python ex08_time_travel.py run <thread_id>")
+        print("  python ex08_time_travel.py list <thread_id>")
+        print("  python ex08_time_travel.py restore <thread_id> <checkpoint_index>")
+        print("  python ex08_time_travel.py diff <thread_id> <index_a> <index_b>")
+        print("  python ex08_time_travel.py fork <thread_id> <checkpoint_index> <new_thread_id>")
+        print("  python ex08_time_travel.py export <thread_id> <output_file>")
+        sys.exit(1)
+
+    command = sys.argv[1]
+
+    if command == "run":
+        if len(sys.argv) < 3:
+            print("Error: thread_id required")
+            sys.exit(1)
+        run_workflow(sys.argv[2])
+
+    elif command == "list":
+        if len(sys.argv) < 3:
+            print("Error: thread_id required")
+            sys.exit(1)
+        list_history(sys.argv[2])
+
+    elif command == "restore":
+        if len(sys.argv) < 4:
+            print("Error: thread_id and checkpoint_index required")
+            sys.exit(1)
+        restore_checkpoint(sys.argv[2], int(sys.argv[3]))
+
+    elif command == "diff":
+        if len(sys.argv) < 5:
+            print("Error: thread_id, index_a, and index_b required")
+            sys.exit(1)
+        diff_checkpoints(sys.argv[2], int(sys.argv[3]), int(sys.argv[4]))
+
+    elif command == "fork":
+        if len(sys.argv) < 5:
+            print("Error: thread_id, checkpoint_index, and new_thread_id required")
+            sys.exit(1)
+        fork_workflow(sys.argv[2], int(sys.argv[3]), sys.argv[4])
+
+    elif command == "export":
+        if len(sys.argv) < 4:
+            print("Error: thread_id and output_file required")
+            sys.exit(1)
+        export_history(sys.argv[2], sys.argv[3])
+
+    else:
+        print(f"Unknown command: {command}")
+        sys.exit(1)
+```
+
+</details>
 
 ---
 
