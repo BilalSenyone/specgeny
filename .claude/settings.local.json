@@ -11,7 +11,9 @@
       "Bash(findstr:*)",
       "Read(//c/Users/diall/AppData/Roaming/Cursor/User/**)",
       "Bash(python -m pip:*)",
-      "WebFetch(domain:docs.langchain.com)"
+      "WebFetch(domain:docs.langchain.com)",
+      "WebSearch",
+      "Bash(python:*)"
     ]
   },
   "enableAllProjectMcpServers": true,

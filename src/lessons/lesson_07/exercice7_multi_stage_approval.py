@@ -28,7 +28,7 @@ class MultiStageState(TypedDict):
 def generate_requirements(state: MultiStageState) -> MultiStageState:
     """ Extract requirements and feature namefor one feature """
     current_feature = state["feature_description"]
-    llm = ChatOpenAI(model="gpt-4-mini", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
 
     prompt = ChatPromptTemplate.from_messages([
         ("system", "Extract max 3 functional requirements from the following feature description.. One per line. Must be testable and specific. Less than 15 words per requirement. Format: FR-XXX: System SHALL/MUST/SHOULD [specific capability]. Example: FR-001: System SHALL provide user account creation functionality"),
@@ -74,7 +74,7 @@ def generate_success_criteria(state: MultiStageState) -> MultiStageState:
     """ Generate success criteria for one feature """
     current_feature = state["feature_description"]
     requirements = state["requirements"]
-    llm = ChatOpenAI(model="gpt-4-mini", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     
     prompt = ChatPromptTemplate.from_messages([
         ("system", "Generate 3 success criteria for the following feature. One per line. Must be measurable and specific. Less than 15 words per criterion. Use the following requirements as context: {requirements}"),
@@ -119,12 +119,12 @@ def generate_full_spec(state: MultiStageState) -> MultiStageState:
     current_feature = state["feature_description"]
     requirements = state["requirements"]
     success_criteria = state["success_criteria"]
-    llm = ChatOpenAI(model="gpt-4-mini", temperature=0)
+    llm = ChatOpenAI(model="gpt-4o-mini", temperature=0)
     
-    prompt = ChatPromptTemplate.from_messages[
-        ("system", "Generate the functional specification for the following feature. No technical details. Less than 200 words. Use the following requirements and success criteria as context: {requirements} {success_criteria}"),
+    prompt = ChatPromptTemplate.from_messages([
+        ("system", "Generate the functional specification for the following feature. No technical details. Less than 200 words. Use the following requirements and success criteria as context: \n\n Requirements: {requirements} \n\n Success Criteria: {success_criteria}"),
         ("user", "Feature Description: {current_feature}")
-    ]
+    ])
 
     chain = prompt | llm
     response = chain.invoke({"current_feature": current_feature, "requirements": requirements, "success_criteria": success_criteria})
@@ -159,13 +159,20 @@ def approve_final(state: MultiStageState) -> MultiStageState:
 def check_approval_status(state: MultiStageState) -> ["approve", "regenerate", "done"]:
     """ Check if approval is required for the current stage """
     # Check stage AND approval history
-    if state["stage"] == "requirements" and not any(item["stage"] == "requirements" and item["approved"] for item in state["approval_history"]):
+    print(f"🔍Checking approval status for {state['stage']}")
+    print(f"🧬Approval history: {state['approval_history']}")
+
+    if state["stage"] == "requirements" and any(item["stage"] == "requirements" and item["approved"] for item in state["approval_history"]):
+        print("👍 Requirements approved")
         return "approve"
-    elif state["stage"] == "criteria" and not any(item["stage"] == "criteria" and item["approved"] for item in state["approval_history"]):
+    elif state["stage"] == "criteria" and any(item["stage"] == "criteria" and item["approved"] for item in state["approval_history"]):
+        print("👍 Criteria approved")
         return "approve"
-    elif state["stage"] == "final" and not any(item["stage"] == "final" and item["approved"] for item in state["approval_history"]):
+    elif state["stage"] == "final" and any(item["stage"] == "final" and item["approved"] for item in state["approval_history"]):
+        print("👍 Final approved")
         return "approve"
     else:
+        print("👎 Rejected. Regenerating...")
         return "regenerate"
 
 
@@ -234,25 +241,25 @@ print("=== Starting workflow ===")
 result = app.invoke(initial, config=config)
 
 # Reject requirement 
-print("User rejects requirement...")
+print("\n🧑‍💼 ❌ User rejects requirement...")
 result = app.invoke(Command(resume={"approved":False, "feedback": "Make it more specific"}), config=config)
 
 # Approve requirement (2nd approval)
-print("User approves requirement (2nd)...")
+print("\n🧑‍💼 ✅ User approves requirement (2nd)...")
 result = app.invoke(Command(resume={"approved":True}), config=config)
 
 # Reject criteria (1st approval)
-print("User rejects criteria (1st approval)...")
+print("\n🧑‍💼 ❌ User rejects criteria (1st approval)...")
 result = app.invoke(Command(resume={"approved":False, "feedback": "Make it more specific"}), config=config)
 
 # Approve criteria (2nd approval)
-print("User approves criteria (2nd approval)...")
+print("\n🧑‍💼 ✅ User approves criteria (2nd approval)...")
 result = app.invoke(Command(resume={"approved":True}), config=config)
 
 # Reject final (1st approval)
-print("User rejects final (1st approval)...")
+print("\n🧑‍💼 ❌ User rejects final (1st approval)...")
 result = app.invoke(Command(resume={"approved":False, "feedback": "Make it more specific"}), config=config)
 
 # Approve final (2nd approval)
-print("User approves final (2nd approval)...")
+print("\n🧑‍💼 ✅User approves final (2nd approval)...")
 result = app.invoke(Command(resume={"approved":True}), config=config)

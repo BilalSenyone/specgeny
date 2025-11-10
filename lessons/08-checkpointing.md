@@ -19,6 +19,218 @@ By the end of this lesson, you will:
 
 ---
 
+## 🔧 Prerequisites: Installing PostgreSQL on Windows 11
+
+Before starting this lesson, you need PostgreSQL installed and running. This section covers three approaches for Windows 11 users, from easiest to most flexible.
+
+### Approach 1: Direct Windows Installation (Recommended for Beginners)
+
+**Easiest setup** - Use the official EDB installer for a traditional Windows application.
+
+**Steps:**
+1. Download the installer from [postgresql.org/download/windows](https://www.postgresql.org/download/windows/)
+2. Run the installer (certified by EDB)
+3. During installation:
+   - Set a **strong password** for the `postgres` superuser (remember this!)
+   - Use default port **5432** (verify no other app uses it)
+   - Select components: PostgreSQL Server, pgAdmin 4, Command Line Tools
+   - Choose data directory (default: `C:\Program Files\PostgreSQL\<version>\data`)
+4. After installation:
+   - Add PostgreSQL to system PATH (optional, for `psql` command access)
+   - Verify installation: Open Command Prompt and run `psql --version`
+
+**Connection string format:**
+```python
+"postgresql://postgres:YOUR_PASSWORD@localhost:5432/specbot"
+```
+
+**Pros:** Simple GUI installer, pgAdmin 4 included, Windows service auto-starts
+**Cons:** Less portable, harder to reset/clean than containers
+
+### Approach 2: Docker Container (Recommended for Development)
+
+**Most flexible** - Runs PostgreSQL in an isolated container, easy to reset and manage.
+
+**Prerequisites:**
+- Install [Docker Desktop for Windows](https://www.docker.com/products/docker-desktop/)
+- Ensure WSL 2 backend is enabled (default in Docker Desktop)
+
+**Steps:**
+
+1. Pull PostgreSQL image:
+   ```bash
+   docker pull postgres:16
+   ```
+
+2. Create and run container with persistent storage:
+   ```bash
+   docker run --name specbot-postgres \
+     -e POSTGRES_PASSWORD=postgres \
+     -e POSTGRES_DB=specbot \
+     -p 5432:5432 \
+     -v specbot-data:/var/lib/postgresql/data \
+     -d postgres:16
+   ```
+
+3. Verify it's running:
+   ```bash
+   docker ps
+   docker exec -it specbot-postgres psql -U postgres -d specbot
+   ```
+
+**Connection string:**
+```python
+"postgresql://postgres:postgres@localhost:5432/specbot"
+```
+
+**Managing your container:**
+```bash
+# Start/stop
+docker start specbot-postgres
+docker stop specbot-postgres
+
+# View logs
+docker logs specbot-postgres
+
+# Reset database (delete and recreate)
+docker rm -f specbot-postgres
+docker volume rm specbot-data
+# Then run the create command again
+```
+
+**Pros:** Isolated environment, easy to reset, matches production setup
+**Cons:** Requires Docker Desktop, slight overhead
+
+#### Alternative: Using Docker Compose (Recommended)
+
+**Even easier** - Manage your PostgreSQL container with a configuration file.
+
+**Steps:**
+
+1. Create a `docker-compose.yml` file in your project root:
+   ```yaml
+   version: '3.8'
+
+   services:
+     postgres:
+       image: postgres:16
+       container_name: specbot-postgres
+       restart: unless-stopped
+       environment:
+         POSTGRES_USER: postgres
+         POSTGRES_PASSWORD: postgres
+         POSTGRES_DB: specbot
+         # Optional: Improve performance
+         POSTGRES_INITDB_ARGS: "-E UTF8"
+       ports:
+         - "5432:5432"
+       volumes:
+         - specbot-data:/var/lib/postgresql/data
+         # Optional: Add initialization scripts
+         # - ./init-scripts:/docker-entrypoint-initdb.d
+       healthcheck:
+         test: ["CMD-SHELL", "pg_isready -U postgres"]
+         interval: 30s
+         timeout: 10s
+         retries: 5
+       # Optional: Set resource limits
+       # deploy:
+       #   resources:
+       #     limits:
+       #       memory: 1G
+       #       cpus: '1.0'
+
+   volumes:
+     specbot-data:
+       driver: local
+   ```
+
+2. Start PostgreSQL with a single command:
+   ```bash
+   docker-compose up -d
+   ```
+
+3. Verify it's running:
+   ```bash
+   docker-compose ps
+   docker-compose logs postgres
+   ```
+
+**Managing with Docker Compose:**
+```bash
+# Start services
+docker-compose up -d
+
+# Stop services (keeps data)
+docker-compose stop
+
+# Stop and remove containers (data persists in volume)
+docker-compose down
+
+# Stop and remove everything including data
+docker-compose down -v
+
+# View logs
+docker-compose logs -f postgres
+
+# Access PostgreSQL CLI
+docker-compose exec postgres psql -U postgres -d specbot
+
+# Restart services
+docker-compose restart
+```
+
+**Optional: Add initialization script**
+
+Create `init-scripts/01-create-tables.sql` in your project:
+```sql
+-- This runs automatically on first startup
+CREATE TABLE IF NOT EXISTS test (
+    id SERIAL PRIMARY KEY,
+    name TEXT NOT NULL
+);
+
+INSERT INTO test (name) VALUES ('Docker Compose works!');
+```
+
+Then uncomment the init scripts volume in `docker-compose.yml`.
+
+**Why Docker Compose?**
+- ✅ Single command to start/stop everything
+- ✅ Configuration file can be version controlled
+- ✅ Easy to share with team members
+- ✅ Can add related services (pgAdmin, Redis, etc.) later
+- ✅ Automatic container restart on system reboot
+- ✅ Built-in health checks
+
+### Quick Verification
+
+Regardless of which approach you choose, verify your connection:
+
+```python
+from langgraph.checkpoint.postgres import PostgresSaver
+
+# Test connection
+checkpointer = PostgresSaver.from_conn_string(
+    "postgresql://postgres:YOUR_PASSWORD@localhost:5432/specbot"
+)
+checkpointer.setup()  # Creates checkpoint tables
+print("✓ PostgreSQL connection successful!")
+```
+
+### Troubleshooting Tips
+
+- **"Connection refused"**: Check if PostgreSQL service is running
+- **"Password authentication failed"**: Verify your password in connection string
+- **"Database does not exist"**: Create it: `CREATE DATABASE specbot;`
+- **Port 5432 in use**: Another PostgreSQL instance or app is using the port
+- **Docker issues on Windows**: Ensure WSL 2 backend is enabled in Docker Desktop settings
+- **docker-compose command not found**: Use `docker compose` (without hyphen) for newer Docker versions
+
+**Recommendation:** For this lesson, **Docker Compose (Approach 2)** offers the best balance of simplicity and flexibility. You can easily reset your database between exercises without affecting your system, and the configuration file makes it easy to share your setup with others.
+
+---
+
 ## 📖 Key Concepts
 
 ### Why Checkpointing Matters

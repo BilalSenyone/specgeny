@@ -19,3 +19,7 @@ networkx>=3.0
 black>=24.0.0
 yapf>=0.40.0
 
+# PostgreSQL
+langgraph>=0.2.0
+psycopg[binary]
+

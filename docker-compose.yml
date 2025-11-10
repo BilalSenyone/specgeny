@@ -1,0 +1,32 @@
+services:
+  postgres:
+    image: postgres:16
+    container_name: specbot-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+      POSTGRES_DB: specbot
+      # Optional: Improve performance
+      POSTGRES_INITDB_ARGS: "-E UTF8"
+    ports:
+      - "5432:5432"
+    volumes:
+      - specbot-data:/var/lib/postgresql/data
+      # Optional: Add initialization scripts
+      # - ./init-scripts:/docker-entrypoint-initdb.d
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    # Optional: Set resource limits
+    # deploy:
+    #   resources:
+    #     limits:
+    #       memory: 1G
+    #       cpus: '1.0'
+
+volumes:
+  specbot-data:
+    driver: local
